@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>INSIDE THE MIND — a language model, thinking, live</title>
+  <style>
+    :root {
+      --cyan: #4be8ff;
+      --magenta: #ff4bd8;
+      --gold: #ffd84b;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { height: 100%; overflow: hidden; background: #02030a; }
+    body { font-family: 'SF Mono', ui-monospace, Menlo, monospace; color: #cfe9ff; }
+    #app { position: fixed; inset: 0; }
+    canvas { display: block; }
+
+    .vignette {
+      position: fixed; inset: 0; pointer-events: none; z-index: 5;
+      background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,8,.55) 100%);
+    }
+
+    #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+    #hud > * { pointer-events: auto; }
+
+    .title {
+      position: absolute; top: 22px; left: 28px; pointer-events: none !important;
+    }
+    .title h1 {
+      font-size: 17px; letter-spacing: .42em; font-weight: 600; color: #eaf6ff;
+      text-shadow: 0 0 18px rgba(75,232,255,.8);
+    }
+    .title p { font-size: 10.5px; letter-spacing: .18em; color: #5f7f9f; margin-top: 7px; }
+    .title p b { color: var(--cyan); font-weight: 600; }
+
+    /* ---- right meter panel ---- */
+    .panel {
+      position: absolute; top: 22px; right: 26px; width: 230px;
+      background: rgba(4,10,24,.55); border: 1px solid rgba(75,232,255,.18);
+      border-radius: 10px; padding: 14px 16px; backdrop-filter: blur(8px);
+      pointer-events: none !important;
+    }
+    .panel h2 { font-size: 9.5px; letter-spacing: .3em; color: #6f93b4; margin-bottom: 10px; }
+    .meter { margin-bottom: 8px; }
+    .meter .lbl { display: flex; justify-content: space-between; font-size: 9.5px; color: #87a8c8; letter-spacing: .08em; margin-bottom: 3px; }
+    .meter .lbl span:last-child { color: #d8eeff; }
+    .bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.07); overflow: hidden; }
+    .bar i {
+      display: block; height: 100%; width: 0%; border-radius: 2px;
+      background: linear-gradient(90deg, var(--cyan), var(--magenta));
+      box-shadow: 0 0 8px rgba(75,232,255,.7);
+      transition: width .25s ease;
+    }
+    .divider { height: 1px; background: rgba(75,232,255,.12); margin: 11px 0; }
+    .stat-row { display: flex; justify-content: space-between; font-size: 10px; color: #87a8c8; margin-bottom: 5px; letter-spacing: .06em;}
+    .stat-row b { color: #eaf6ff; font-weight: 600; }
+    #entropy-val.hot { color: var(--magenta); }
+
+    /* ---- transcript ---- */
+    .transcript {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      bottom: 108px; width: min(880px, 86vw); max-height: 130px; overflow: hidden;
+      text-align: center; font-size: 15.5px; line-height: 1.75; color: #b9d9f2;
+      pointer-events: none !important;
+      display: flex; flex-direction: column-reverse;
+      mask-image: linear-gradient(to top, black 70%, transparent 100%);
+    }
+    .transcript .tok { transition: color .3s; }
+    .transcript .tok.prompt { color: #6f93b4; }
+    .transcript .tok.fresh { color: #fff; text-shadow: 0 0 14px var(--cyan); }
+
+    /* ---- controls ---- */
+    .controls {
+      position: absolute; left: 50%; transform: translateX(-50%); bottom: 26px;
+      display: flex; gap: 10px; align-items: center;
+      background: rgba(4,10,24,.6); border: 1px solid rgba(75,232,255,.18);
+      border-radius: 12px; padding: 11px 14px; backdrop-filter: blur(10px);
+    }
+    .controls input[type=text] {
+      width: min(380px, 38vw); background: rgba(8,18,40,.8); border: 1px solid rgba(75,232,255,.25);
+      color: #eaf6ff; font: inherit; font-size: 12.5px; padding: 9px 12px; border-radius: 8px; outline: none;
+    }
+    .controls input[type=text]:focus { border-color: var(--cyan); box-shadow: 0 0 12px rgba(75,232,255,.25); }
+    .controls button {
+      font: inherit; font-size: 11px; letter-spacing: .14em; cursor: pointer;
+      color: #02131c; background: linear-gradient(135deg, var(--cyan), #7ba7ff);
+      border: 0; padding: 10px 18px; border-radius: 8px; font-weight: 700;
+      box-shadow: 0 0 16px rgba(75,232,255,.45);
+    }
+    .controls button:disabled { opacity: .35; cursor: default; box-shadow: none; }
+    .controls button.stop { background: linear-gradient(135deg, var(--magenta), #ff7b7b); box-shadow: 0 0 16px rgba(255,75,216,.45); }
+    .slider-group { display: flex; flex-direction: column; gap: 2px; width: 92px; }
+    .slider-group label { font-size: 8.5px; letter-spacing: .18em; color: #6f93b4; text-align: center;}
+    .slider-group input { accent-color: var(--cyan); width: 100%; }
+
+    /* ---- loading ---- */
+    #loader {
+      position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 22px;
+      background: radial-gradient(ellipse at center, #061226 0%, #02030a 70%);
+      transition: opacity .8s ease;
+    }
+    #loader.done { opacity: 0; pointer-events: none; }
+    #loader h1 { font-size: 21px; letter-spacing: .5em; color: #eaf6ff; text-shadow: 0 0 24px rgba(75,232,255,.9); }
+    #loader p { font-size: 11px; letter-spacing: .2em; color: #5f7f9f; }
+    #loader .bar { width: min(420px, 70vw); height: 3px; }
+    #loader .pct { font-size: 10px; color: var(--cyan); letter-spacing: .3em; }
+
+    /* ---- attention head readout (on ring click) ---- */
+    .head-panel {
+      position: absolute; left: 26px; top: 50%; transform: translateY(-50%) translateX(-16px);
+      width: 252px; max-height: 72vh; overflow: hidden;
+      background: rgba(4,10,24,.62); border: 1px solid rgba(75,232,255,.18);
+      border-radius: 10px; padding: 13px 14px; backdrop-filter: blur(8px);
+      opacity: 0; transition: opacity .35s ease, transform .35s ease;
+      pointer-events: none !important;
+    }
+    .head-panel.show { opacity: 1; transform: translateY(-50%) translateX(0); }
+    .head-panel h2 { font-size: 9.5px; letter-spacing: .26em; color: #6f93b4; margin-bottom: 10px; }
+    .head-panel h2 b { color: #eaf6ff; }
+    .head-row { display: flex; align-items: center; gap: 7px; margin-bottom: 4.5px; font-size: 10px; }
+    .head-row .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; background: currentColor; }
+    .head-row .hid { color: #5f7f9f; flex: none; width: 24px; }
+    .head-row .word { color: #eaf6ff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; }
+    .head-row .pct { color: #87a8c8; flex: none; width: 38px; text-align: right; }
+    .head-row .wbar { flex: none; width: 36px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
+    .head-row .wbar i { display: block; height: 100%; background: currentColor; border-radius: 2px; }
+
+    @media (max-width: 760px) {
+      .panel { display: none; }
+      .controls { flex-wrap: wrap; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div class="vignette"></div>
+
+  <div id="hud">
+    <div class="title">
+      <h1>INSIDE THE MIND</h1>
+      <p>a <b>real language model</b> thinking, live in your browser · no server · every spark is real math</p>
+      <p>click a ring to detonate that layer into its <b>16 attention heads</b></p>
+    </div>
+
+    <div class="panel">
+      <h2>CORTEX TELEMETRY</h2>
+      <div class="meter"><div class="lbl"><span>LAYER 1 · attention</span><span id="l0-val"></span></div><div class="bar"><i id="l0"></i></div></div>
+      <div class="meter"><div class="lbl"><span>LAYER 2 · attention</span><span id="l1-val"></span></div><div class="bar"><i id="l1"></i></div></div>
+      <div class="meter"><div class="lbl"><span>LAYER 3 · attention</span><span id="l2-val"></span></div><div class="bar"><i id="l2"></i></div></div>
+      <div class="meter"><div class="lbl"><span>LAYER 4 · attention</span><span id="l3-val"></span></div><div class="bar"><i id="l3"></i></div></div>
+      <div class="divider"></div>
+      <div class="stat-row"><span>UNCERTAINTY</span><b id="entropy-val">—</b></div>
+      <div class="stat-row"><span>NEXT WORD ODDS</span><b id="conf-val">—</b></div>
+      <div class="stat-row"><span>TOKENS DREAMED</span><b id="tok-count">0</b></div>
+      <div class="stat-row"><span>SYNAPSES / TOKEN</span><b>67,239,936</b></div>
+    </div>
+
+    <div class="transcript"><div id="transcript-inner"></div></div>
+
+    <div class="controls">
+      <input id="prompt" type="text" value="Once upon a time, there was a tiny dragon who was afraid of fire." spellcheck="false" />
+      <div class="slider-group">
+        <label>HEAT <span id="temp-lbl">0.8</span></label>
+        <input id="temp" type="range" min="0.1" max="1.4" step="0.05" value="0.8" />
+      </div>
+      <div class="slider-group">
+        <label>PACE</label>
+        <input id="speed" type="range" min="0.3" max="2.5" step="0.1" value="1.0" />
+      </div>
+      <button id="go">DREAM</button>
+    </div>
+  </div>
+
+  <div id="loader">
+    <h1>INSIDE THE MIND</h1>
+    <p id="loader-stage">SUMMONING 68,514,816 PARAMETERS…</p>
+    <div class="bar"><i id="loader-bar"></i></div>
+    <div class="pct" id="loader-pct">0%</div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

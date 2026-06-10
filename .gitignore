@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+
+# converted model weights (large; regenerate with `npm run prepare-model`)
+public/model/weights.bin
+public/model/manifest.json
+
+# raw model source (downloaded; regenerate with prepare-model)
+model_src/pytorch_model.bin
+
+# test artifacts
+test/shot_*.png
+test/*.png
+
+# logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
