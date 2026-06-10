@@ -2,7 +2,7 @@
 
 https://github.com/user-attachments/assets/3e36aaca-e60e-4f1c-a864-1da1bf94622d
 
-> _Produced by Claude Fable-5 (Fable-5 thanks AVB for guidance)._
+> _Produced by Claude Fable-5_
 
 **A real language model, thinking, live in your browser.** TinyStories-33M
 (GPT-Neo, 68M parameters) runs entirely client-side in a Web Worker — the
