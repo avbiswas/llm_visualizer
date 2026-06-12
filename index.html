@@ -90,6 +90,11 @@
     }
     .controls button:disabled { opacity: .35; cursor: default; box-shadow: none; }
     .controls button.stop { background: linear-gradient(135deg, var(--magenta), #ff7b7b); box-shadow: 0 0 16px rgba(255,75,216,.45); }
+    .controls button.sound {
+      width: 38px; padding: 10px 0; color: #9dc4e4; background: rgba(8,18,40,.8);
+      border: 1px solid rgba(75,232,255,.25); box-shadow: none;
+    }
+    .controls button.sound.on { color: #02131c; background: var(--cyan); }
     .slider-group { display: flex; flex-direction: column; gap: 2px; width: 92px; }
     .slider-group label { font-size: 8.5px; letter-spacing: .18em; color: #6f93b4; text-align: center;}
     .slider-group input { accent-color: var(--cyan); width: 100%; }
@@ -106,6 +111,15 @@
     #loader p { font-size: 11px; letter-spacing: .2em; color: #5f7f9f; }
     #loader .bar { width: min(420px, 70vw); height: 3px; }
     #loader .pct { font-size: 10px; color: var(--cyan); letter-spacing: .3em; }
+    .loader-actions { display: none; gap: 10px; align-items: center; }
+    #loader.ready .loader-actions { display: flex; }
+    #loader.ready .bar, #loader.ready .pct { display: none; }
+    .loader-actions button {
+      font: inherit; font-size: 10px; letter-spacing: .18em; cursor: pointer; border-radius: 8px;
+      padding: 11px 18px; border: 1px solid rgba(75,232,255,.35);
+    }
+    #enter-sound { color: #02131c; background: linear-gradient(135deg, var(--cyan), #7ba7ff); font-weight: 700; }
+    #enter-muted { color: #87a8c8; background: rgba(8,18,40,.72); }
 
     /* ---- attention head readout (on ring click) ---- */
     .head-panel {
@@ -170,6 +184,7 @@
         <input id="speed" type="range" min="0.3" max="2.5" step="0.1" value="1.0" />
       </div>
       <button id="go">DREAM</button>
+      <button id="sound" class="sound" type="button" aria-label="Mute sound" aria-pressed="true">♪</button>
     </div>
   </div>
 
@@ -178,6 +193,10 @@
     <p id="loader-stage">SUMMONING 68,514,816 PARAMETERS…</p>
     <div class="bar"><i id="loader-bar"></i></div>
     <div class="pct" id="loader-pct">0%</div>
+    <div class="loader-actions">
+      <button id="enter-sound" type="button">ENTER WITH SOUND</button>
+      <button id="enter-muted" type="button">ENTER MUTED</button>
+    </div>
   </div>
 
   <script type="module" src="/src/main.js"></script>

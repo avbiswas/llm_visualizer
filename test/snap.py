@@ -17,7 +17,9 @@ async def main():
         await page.screenshot(path="test/shot_loading.png")
         # wait for loader to finish (model load) then for generation to begin
         try:
-            await page.wait_for_selector("#loader.done", timeout=120000)
+            await page.wait_for_selector("#loader.ready", timeout=120000)
+            await page.click("#enter-muted")
+            await page.wait_for_selector("#loader.done")
         except Exception:
             errors.append("LOADER NEVER FINISHED")
         await page.wait_for_timeout(wait_s * 1000)

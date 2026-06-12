@@ -76,6 +76,23 @@ function norm(x) {
   return Math.sqrt(s);
 }
 
+// Fold the full residual stream into 12 energy bands. This is intentionally
+// simple and deterministic: every hidden dimension contributes to one pitch
+// class, while normalization makes profiles comparable across layers/tokens.
+export function residualChroma(x) {
+  const chroma = new Float32Array(12);
+  let sum = 0;
+  for (let i = 0; i < x.length; i++) {
+    const energy = x[i] * x[i];
+    chroma[i % 12] += energy;
+    sum += energy;
+  }
+  if (sum > 0 && Number.isFinite(sum)) {
+    for (let i = 0; i < chroma.length; i++) chroma[i] /= sum;
+  }
+  return chroma;
+}
+
 export class GPTNeo {
   constructor(manifest, weightsBuffer, config, onProgress = null) {
     this.config = config;
@@ -209,7 +226,14 @@ export class GPTNeo {
       const residSample = new Float32Array(PROBE_DIMS.length);
       for (let i = 0; i < PROBE_DIMS.length; i++) residSample[i] = b.x[PROBE_DIMS[i]];
       attnCapture.push(probsAll);
-      stats.push({ residNorm: norm(b.x), attnNorm, mlpNorm, headEntropy, residSample });
+      stats.push({
+        residNorm: norm(b.x),
+        attnNorm,
+        mlpNorm,
+        headEntropy,
+        residSample,
+        residChroma: residualChroma(b.x),
+      });
     }
 
     layerNorm(b.x, w['transformer.ln_f.weight'], w['transformer.ln_f.bias'], eps, b.ln);

@@ -86,6 +86,7 @@ function instrument(fw, sampledId) {
       mlpNorm: s.mlpNorm,
       meanEntropy: entSum / nHead,
       residSample: s.residSample,
+      residChroma: s.residChroma,
     };
   });
   return layers;
@@ -93,7 +94,10 @@ function instrument(fw, sampledId) {
 
 function emitToken() {
   const { top, entropy } = topkProbs(lastLogits, Math.max(topk, STORM_K), temperature);
-  const sampled = sampleTopK(top.slice(0, topk));
+  // The dream is endless: never sample EOS, or a story-ending prompt would
+  // stop generation after a token or two. The 400-token cap (main thread)
+  // and the manual stop button are the real terminators.
+  const sampled = sampleTopK(top.filter((t) => t.id !== EOS).slice(0, topk));
   const fw = model.forward(sampled, { captureAttention: true });
   lastLogits = fw.logits;
   const stormIds = new Int32Array(STORM_K);
@@ -129,23 +133,29 @@ function emitToken() {
 
 onmessage = async (e) => {
   const msg = e.data;
-  if (msg.type === 'load') {
-    await load();
-  } else if (msg.type === 'start') {
-    temperature = msg.temperature ?? 0.8;
-    topk = msg.topk ?? 40;
-    model.reset();
-    const ids = tokenizer.encode(msg.prompt);
-    let fw = null;
-    for (const id of ids) fw = model.forward(id, { captureAttention: false });
-    lastLogits = fw.logits;
-    postMessage({
-      type: 'prompt_done',
-      tokens: ids.map((id) => ({ id, text: tokenizer.decodeOne(id) })),
-    });
-  } else if (msg.type === 'next') {
-    emitToken();
-  } else if (msg.type === 'set') {
-    if (msg.temperature !== undefined) temperature = msg.temperature;
+  try {
+    if (msg.type === 'load') {
+      await load();
+    } else if (msg.type === 'start') {
+      temperature = msg.temperature ?? 0.8;
+      topk = msg.topk ?? 40;
+      model.reset();
+      const ids = tokenizer.encode(msg.prompt);
+      let fw = null;
+      for (const id of ids) fw = model.forward(id, { captureAttention: false });
+      lastLogits = fw.logits;
+      postMessage({
+        type: 'prompt_done',
+        tokens: ids.map((id) => ({ id, text: tokenizer.decodeOne(id) })),
+        chroma: fw?.stats.at(-1)?.residChroma ?? new Float32Array(12),
+      });
+    } else if (msg.type === 'next') {
+      emitToken();
+    } else if (msg.type === 'set') {
+      if (msg.temperature !== undefined) temperature = msg.temperature;
+    }
+  } catch (err) {
+    // Surface worker-side failures instead of silently halting generation.
+    postMessage({ type: 'error', where: msg.type, error: String((err && err.stack) || err) });
   }
 };

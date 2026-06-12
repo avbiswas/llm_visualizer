@@ -33,8 +33,10 @@ npm run prepare-model   # one-time: downloads + converts weights (needs python3 
 npm run dev             # open the printed URL
 ```
 
-The model auto-dreams on load. Controls: prompt box + **DREAM**, HEAT
-(temperature), PACE (animation speed). Drag to orbit, scroll to zoom.
+After the model loads, choose **ENTER WITH SOUND** or **ENTER MUTED**; the model
+then auto-dreams. Controls: prompt box + **DREAM**, HEAT (temperature), PACE
+(animation speed), and the music-note button for sound. Drag to orbit, scroll
+to zoom. Layer clicks and zoom gestures are sonified alongside token generation.
 Press **H** to hide the control bar for clean video capture.
 
 If `model_src/` is already populated, `prepare-model` only re-runs the

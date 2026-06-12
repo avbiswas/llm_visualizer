@@ -7,6 +7,8 @@ import { Tethers } from './viz/tethers.js';
 import { Storm, STORM_Y } from './viz/storm.js';
 import { makeTextSprite } from './viz/textsprite.js';
 import { PROBE_DIMS } from './engine/model.js';
+import { ModelMusic } from './audio/music.js';
+import { WaveformBackdrop } from './viz/waveform.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -25,6 +27,9 @@ const ribbon = new TokenRibbon(scene);
 const rings = new LayerRings(scene);
 const tethers = new Tethers(scene);
 const storm = new Storm(scene);
+const music = new ModelMusic();
+window.__music = music; // for tests / debugging the audio graph
+const waveBg = new WaveformBackdrop(scene);
 
 // the "thought pulse" that rises from the newest word through the layers
 const pulse = {
@@ -136,6 +141,7 @@ function headBurst(L) {
   rings.pulse(L, 2);
   rings.setActivity(L, 1);
   if (!lastLayers || !lastLayers[L]) return;
+  music.playHeadBurst(L, lastLayers[L].headTop, ribbon.tokens.length);
   showHeadReadout(L, lastLayers[L].headTop);
   const tmp = new THREE.Vector3();
   lastLayers[L].headTop.forEach(({ h, t, w }) => {
@@ -180,7 +186,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 const worker = new Worker(new URL('./engine/worker.js', import.meta.url), { type: 'module' });
 let pace = 1.0;
 let running = false;
-let pendingToken = null;
+const pendingTokens = [];
 let animating = false;
 let tokensDreamed = 0;
 let stopRequested = false;
@@ -194,16 +200,34 @@ worker.onmessage = (e) => {
     $('loader-pct').textContent = `${Math.round(m.frac * 100)}%`;
     $('loader-stage').textContent = m.stage.toUpperCase() + '…';
   } else if (m.type === 'ready') {
-    $('loader').classList.add('done');
-    setTimeout(() => start(), 900); // auto-dream on load
+    $('loader').classList.add('ready');
+    $('loader-stage').textContent = 'MODEL READY · AUDIO MAP ONLINE';
   } else if (m.type === 'prompt_done') {
-    playPrompt(m.tokens);
+    playPrompt(m.tokens, m.chroma);
   } else if (m.type === 'token') {
-    pendingToken = m;
+    pendingTokens.push(m);
+    lastProgress = performance.now();
     maybeAnimate();
+  } else if (m.type === 'error') {
+    console.error(`Worker error during "${m.where}":`, m.error);
   }
 };
+worker.onerror = (e) => console.error('Worker crashed:', e.message, e.filename, e.lineno);
+worker.onmessageerror = (e) => console.error('Worker message error:', e);
 worker.postMessage({ type: 'load' });
+
+// Watchdog: if generation is running but nothing has arrived or animated for a
+// while and the queue is empty, the previous `next` request was lost or failed.
+// Re-poke the worker so the dream can never silently die mid-stream.
+let lastProgress = performance.now();
+setInterval(() => {
+  if (!running || animating || pendingTokens.length || stopRequested) return;
+  if (performance.now() - lastProgress > 6000 && tokensDreamed < 400) {
+    console.warn('Generation stalled; re-requesting next token.');
+    lastProgress = performance.now();
+    worker.postMessage({ type: 'next' });
+  }
+}, 1500);
 
 // ---------- transcript ----------
 function addTranscript(text, cls) {
@@ -217,19 +241,32 @@ function addTranscript(text, cls) {
 }
 
 // ---------- generation flow ----------
+let startedAt = 0;
 function start() {
   if (running) {
+    // Ignore clicks landing right after auto-start (double-clicks, stray
+    // events from the enter overlay) — they'd silently kill the dream.
+    if (performance.now() - startedAt < 1500) {
+      console.warn('[ui] ignored stop request <1.5s after start');
+      return;
+    }
     stopRequested = true;
+    console.warn('[ui] stop requested — dream will end after the current token');
+    music.playUi('stop');
     return;
   }
+  music.playUi('start');
   running = true;
+  startedAt = performance.now();
   stopRequested = false;
   tokensDreamed = 0;
-  pendingToken = null;
+  lastProgress = performance.now();
+  pendingTokens.length = 0;
+  emaWork.fill(null);
   ribbon.reset();
   $('transcript-inner').innerHTML = '';
   $('tok-count').textContent = '0';
-  $('go').textContent = 'WAKE';
+  $('go').textContent = 'STOP';
   $('go').classList.add('stop');
   worker.postMessage({
     type: 'start',
@@ -239,30 +276,39 @@ function start() {
   });
 }
 
-async function playPrompt(tokens) {
-  for (const t of tokens) {
+async function playPrompt(tokens, chroma) {
+  music.beginSession(chroma);
+  for (let n = 0; n < tokens.length; n++) {
+    const t = tokens[n];
     const i = ribbon.addToken(t.text, { isPrompt: true });
     ribbon.flash(i, 0.7);
     addTranscript(t.text, 'prompt');
     rings.pulse(Math.floor(Math.random() * 4), 0.3);
+    music.playPromptToken(t.id, n);
     await wait(70);
   }
   worker.postMessage({ type: 'next' });
 }
 
 function maybeAnimate() {
-  if (!animating && pendingToken) {
-    const data = pendingToken;
-    pendingToken = null;
-    animateToken(data);
-  }
+  if (animating || !pendingTokens.length || !running) return;
+  animating = true;
+  const data = pendingTokens.shift();
+  animateToken(data)
+    .catch((error) => console.error('Token animation failed; continuing generation.', error))
+    .finally(() => {
+      animating = false;
+      maybeAnimate();
+    });
 }
 
 async function animateToken(d) {
-  animating = true;
   lastLayers = d.layers;
-  // ask for the next token NOW so compute overlaps animation
-  if (!d.done && !stopRequested && tokensDreamed < 400) worker.postMessage({ type: 'next' });
+  // ask for the next token NOW so compute overlaps animation. We deliberately
+  // ignore d.done: the dream is endless, so even an EOS token keeps the stream
+  // going (the worker also avoids sampling EOS). Only the 400-token cap or a
+  // manual stop ends a session.
+  if (!stopRequested && tokensDreamed < 400) worker.postMessage({ type: 'next' });
 
   // 1 ── thought pulse rises from the newest word into the stack
   const from = ribbon.tokens.length
@@ -286,6 +332,7 @@ async function animateToken(d) {
     const lay = d.layers[L];
     rings.pulse(L, 0.35 + 0.85 * rel[L]);
     rings.setActivity(L, 0.08 + 0.92 * rel[L] * rel[L]);
+    music.playLayer(L, lay, rel[L], d.seqLen, pace);
     const bar = $(`l${L}`);
     if (bar) {
       bar.style.width = `${Math.round(12 + 88 * rel[L])}%`;
@@ -357,6 +404,7 @@ async function animateToken(d) {
   storm.setDistribution(d.stormPs, d.labels, d.winnerLabelIndex, d.winnerStormIndex);
   storm.mat.uniforms.uWinner.value = d.winnerStormIndex;
   storm.setEnergy(0.8);
+  music.playStorm(d.entropy, d.p);
   $('entropy-val').textContent = `${d.entropy.toFixed(2)} bits`;
   $('entropy-val').classList.toggle('hot', d.entropy > 4);
   $('conf-val').textContent = `${(d.p * 100).toFixed(1)}%`;
@@ -372,7 +420,17 @@ async function animateToken(d) {
   const t0 = performance.now();
   const dur = 620 / pace;
   await new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    // Fallback: if rAF is throttled (e.g. background tab), never leave the
+    // pipeline hung waiting on a frame that won't come.
+    const guard = setTimeout(finish, dur + 800);
     (function fall() {
+      if (settled) return;
       const t = Math.min(1, (performance.now() - t0) / dur);
       const e = 1 - Math.pow(1 - t, 3);
       drop.position.set(
@@ -382,7 +440,10 @@ async function animateToken(d) {
       );
       drop.material.opacity = 1;
       if (t < 1) requestAnimationFrame(fall);
-      else resolve();
+      else {
+        clearTimeout(guard);
+        finish();
+      }
     })();
   });
   scene.remove(drop);
@@ -391,21 +452,21 @@ async function animateToken(d) {
 
   const idx = ribbon.addToken(d.text);
   ribbon.flash(idx, 1.4);
+  music.onToken(d);
   addTranscript(d.text, 'fresh');
   tokensDreamed++;
   $('tok-count').textContent = tokensDreamed;
   storm.setCollapse(0);
   storm.setEnergy(0.22);
 
-  animating = false;
-  if (d.done || stopRequested || tokensDreamed >= 400) {
+  if (stopRequested || tokensDreamed >= 400) {
     running = false;
     stopRequested = false;
     $('go').textContent = 'DREAM';
     $('go').classList.remove('stop');
+    music.endSession();
     return;
   }
-  maybeAnimate();
 }
 
 // ---------- UI ----------
@@ -421,6 +482,37 @@ $('speed').addEventListener('input', () => {
   pace = parseFloat($('speed').value);
 });
 
+function updateSoundButton() {
+  const on = !music.muted;
+  $('sound').classList.toggle('on', on);
+  $('sound').setAttribute('aria-pressed', String(on));
+  $('sound').setAttribute('aria-label', on ? 'Mute sound' : 'Enable sound');
+  $('sound').textContent = on ? '♪' : '×';
+}
+
+let entered = false;
+async function enter({ muted }) {
+  if (entered) return;
+  entered = true;
+  $('enter-sound').disabled = true;
+  $('enter-muted').disabled = true;
+  await music.unlock({ muted });
+  updateSoundButton();
+  $('loader').classList.add('done');
+  setTimeout(() => {
+    if (!running) start(); // never let auto-start double-fire into a stop
+  }, 350);
+}
+
+$('enter-sound').addEventListener('click', () => enter({ muted: false }));
+$('enter-muted').addEventListener('click', () => enter({ muted: true }));
+$('sound').addEventListener('click', async () => {
+  if (!music.ctx) await music.unlock({ muted: false });
+  else music.setMuted(!music.muted);
+  updateSoundButton();
+  if (!music.muted) music.playUi();
+});
+
 // H = hide controls (clean video capture), shows everything else
 addEventListener('keydown', (e) => {
   if (e.key === 'h' && document.activeElement !== $('prompt')) {
@@ -432,11 +524,28 @@ addEventListener('keydown', (e) => {
 // ---------- render loop ----------
 const clock = new THREE.Clock();
 const stormCenter = new THREE.Vector3(0, STORM_Y, 0);
+let lastCameraDistance = camera.position.distanceTo(controls.target);
+let lastAzimuth = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
 function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(0.05, clock.getDelta());
   const time = clock.elapsedTime;
+  const cameraDistance = camera.position.distanceTo(controls.target);
+  const azimuth = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
+  let dAz = azimuth - lastAzimuth;
+  if (dAz > Math.PI) dAz -= Math.PI * 2;
+  if (dAz < -Math.PI) dAz += Math.PI * 2;
+  music.updateCamera({
+    // 1 = pressed against the mind, 0 = drifting far outside it
+    proximity: 1 - THREE.MathUtils.clamp((cameraDistance - controls.minDistance) / (controls.maxDistance - controls.minDistance), 0, 1),
+    zoomVel: (cameraDistance - lastCameraDistance) / Math.max(dt, 0.001),
+    azimuth,
+    rotVel: dAz / Math.max(dt, 0.001),
+  });
+  lastCameraDistance = cameraDistance;
+  lastAzimuth = azimuth;
 
+  waveBg.update(music, dt, time);
   ribbon.update(dt);
   rings.update(dt, time, camera.position);
   tethers.update(dt);
